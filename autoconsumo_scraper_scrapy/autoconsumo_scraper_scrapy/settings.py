@@ -1,0 +1,106 @@
+# Scrapy settings for autoconsumo_scraper_scrapy project
+#
+# For simplicity, this file contains only settings considered important or
+# commonly used. You can find more settings consulting the documentation:
+#
+#     https://docs.scrapy.org/en/latest/topics/settings.html
+#     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
+#     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+
+BOT_NAME = "autoconsumo_scraper_scrapy"
+
+SPIDER_MODULES = ["autoconsumo_scraper_scrapy.spiders"]
+NEWSPIDER_MODULE = "autoconsumo_scraper_scrapy.spiders"
+
+ADDONS = {}
+
+
+# Crawl responsibly by identifying yourself (and your website) on the user-agent
+#USER_AGENT = "autoconsumo_scraper_scrapy (+http://www.yourdomain.com)"
+
+# Obey robots.txt rules
+ROBOTSTXT_OBEY = True
+
+# Concurrency and throttling settings
+#CONCURRENT_REQUESTS = 16
+CONCURRENT_REQUESTS_PER_DOMAIN = 1
+DOWNLOAD_DELAY = 1
+
+# Disable cookies (enabled by default)
+#COOKIES_ENABLED = False
+
+# Disable Telnet Console (enabled by default)
+#TELNETCONSOLE_ENABLED = False
+
+# Override the default request headers:
+#DEFAULT_REQUEST_HEADERS = {
+#    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+#    "Accept-Language": "en",
+#}
+
+# Enable or disable spider middlewares
+# See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+#SPIDER_MIDDLEWARES = {
+#    "autoconsumo_scraper_scrapy.middlewares.AutoconsumoScraperScrapySpiderMiddleware": 543,
+#}
+
+# Enable or disable downloader middlewares
+# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
+#DOWNLOADER_MIDDLEWARES = {
+#    "autoconsumo_scraper_scrapy.middlewares.AutoconsumoScraperScrapyDownloaderMiddleware": 543,
+#}
+
+# Enable or disable extensions
+# See https://docs.scrapy.org/en/latest/topics/extensions.html
+#EXTENSIONS = {
+#    "scrapy.extensions.telnet.TelnetConsole": None,
+#}
+
+# Configure item pipelines
+# See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+ITEM_PIPELINES = {
+    "autoconsumo_scraper_scrapy.pipelines.TextFilePipeline": 200,
+    "scrapy.pipelines.files.FilesPipeline": 1
+}
+
+# Enable and configure the AutoThrottle extension (disabled by default)
+# See https://docs.scrapy.org/en/latest/topics/autothrottle.html
+#AUTOTHROTTLE_ENABLED = True
+# The initial download delay
+#AUTOTHROTTLE_START_DELAY = 5
+# The maximum download delay to be set in case of high latencies
+#AUTOTHROTTLE_MAX_DELAY = 60
+# The average number of requests Scrapy should be sending in parallel to
+# each remote server
+#AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
+# Enable showing throttling stats for every response received:
+#AUTOTHROTTLE_DEBUG = False
+
+# Enable and configure HTTP caching (disabled by default)
+# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
+#HTTPCACHE_ENABLED = True
+#HTTPCACHE_EXPIRATION_SECS = 0
+#HTTPCACHE_DIR = "httpcache"
+#HTTPCACHE_IGNORE_HTTP_CODES = []
+#HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+
+# Set settings whose default value is deprecated to a future-proof value
+FEED_EXPORT_ENCODING = "utf-8"
+
+# Logging configuration
+# Evitar que Scrapy loguee el contenido completo de los items
+LOG_LEVEL = 'INFO'
+LOG_FORMAT = '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
+LOG_DATEFORMAT = '%Y-%m-%d %H:%M:%S'
+
+# Usar LogFormatter personalizado que NO loguea el contenido de los items
+# Esto es CRÍTICO para evitar que los logs crezcan demasiado
+LOG_FORMATTER = 'autoconsumo_scraper_scrapy.logformatter.PoliteLogFormatter'
+
+# Deshabilitar el log de stats excesivo
+LOG_ENABLED = True
+LOG_STDOUT = False
+
+# No mostrar items en el log (MUY IMPORTANTE)
+# Esto previene que Scrapy loguee el contenido de cada item
+LOGSTATS_INTERVAL = 60.0  # Reducir frecuencia de stats

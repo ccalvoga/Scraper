@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autoconsumo Scraper</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Autoconsumo Scraper</h1>
+        <div class="main-controls">
+            <button id="start-scrape">Iniciar Scraping</button>
+            <button id="cancel-scrape" style="display: none;">Cancelar</button>
+            <button id="reload-files">Recargar Ficheros</button>
+            <button id="toggle-config">⚙️ Configuración Avanzada</button>
+            <span id="scrape-status"></span>
+        </div>
+
+        <!-- Panel de Configuración Avanzada (oculto por defecto) -->
+        <div id="config-panel" class="config-panel" style="display: none;">
+            <h2>⚙️ Configuración de Scraping</h2>
+
+            <div class="config-section">
+                <h3>📊 Control de Profundidad</h3>
+                <div class="config-row">
+                    <label for="max-depth">Profundidad Máxima:</label>
+                    <input type="number" id="max-depth" value="3" min="0" max="10">
+                    <span class="help-text">Niveles de enlaces a seguir (0 = solo URLs iniciales)</span>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>🔍 Comportamiento sin Términos de Interés</h3>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="crawl-strategy" value="continue" checked>
+                        <strong>Continuar crawleando</strong> - Seguir navegando aunque la página no tenga términos
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="crawl-strategy" value="stop">
+                        <strong>Detener rama</strong> - No seguir enlaces de páginas sin términos de interés
+                    </label>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>📥 Tipos de Archivos a Descargar</h3>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" name="file-type" value="documents" checked>
+                        Documentos (PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX)
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" name="file-type" value="images">
+                        Imágenes (JPG, PNG, GIF, SVG, WEBP)
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" name="file-type" value="archives">
+                        Archivos comprimidos (ZIP, RAR, 7Z, TAR, GZ)
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" name="file-type" value="other">
+                        Otros archivos (TXT, CSV, JSON, XML)
+                    </label>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>🌐 Alcance de Descargas</h3>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="download-scope" value="same-domain" checked>
+                        <strong>Solo del mismo dominio</strong> - Solo descargar archivos del dominio actual
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="download-scope" value="any-domain">
+                        <strong>Cualquier dominio</strong> - Descargar archivos de cualquier URL
+                    </label>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>📂 Restricción de Directorio</h3>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="path-restriction" value="base-path" checked>
+                        <strong>Solo directorio base</strong> - Crawlear solo dentro del path inicial
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="radio" name="path-restriction" value="same-domain">
+                        <strong>Todo el dominio</strong> - Crawlear cualquier URL del mismo dominio
+                    </label>
+                </div>
+                <div class="config-example">
+                    Ejemplo: Si URL inicial es <code>/es/energia/renovables/</code>
+                    <br>• Base path: solo <code>/es/energia/renovables/*</code>
+                    <br>• Todo dominio: permite <code>/es/agua/</code>, <code>/en/energy/</code>, etc.
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>💾 Opciones de Guardado</h3>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" id="save-page-text" checked>
+                        Guardar texto completo de páginas con términos
+                    </label>
+                </div>
+                <div class="config-row">
+                    <label>
+                        <input type="checkbox" id="save-html" checked>
+                        Guardar HTML original de páginas con términos
+                    </label>
+                </div>
+            </div>
+
+            <button id="apply-config" class="apply-config-btn">✓ Aplicar Configuración</button>
+        </div>
+
+        <div class="main-layout">
+            <div class="top-section">
+                <!-- Columna 1: Editor de Fuentes -->
+                <div id="fuentes-panel" class="layout-panel">
+                    <div class="tab-bar">
+                        <button class="tab-btn active" data-tab="fuentes-editor-container">Editor</button>
+                        <button class="tab-btn" data-tab="fuentes-preview-container">Vista Previa</button>
+                    </div>
+                    <div id="fuentes-editor-container" class="tab-content active">
+                        <textarea id="fuentes-editor"></textarea>
+                    </div>
+                    <div id="fuentes-preview-container" class="tab-content markdown-body"></div>
+                    <button class="save-btn" data-filename="fuentes.csv">Guardar</button>
+                </div>
+
+                <!-- Columna 2: Terminos y Exclusiones -->
+                <div class="layout-column">
+                    <div id="terminos-panel" class="layout-panel">
+                        <h2>Términos de Interés (terminos_interes.txt)</h2>
+                        <textarea id="terminos-editor"></textarea>
+                        <button class="save-btn" data-filename="terminos_interes.txt">Guardar</button>
+                    </div>
+                    <div id="exclusiones-panel" class="layout-panel">
+                        <h2>Exclusiones (exclusiones.txt)</h2>
+                        <textarea id="exclusiones-editor"></textarea>
+                        <button class="save-btn" data-filename="exclusiones.txt">Guardar</button>
+                    </div>
+                </div>
+
+                <!-- Columna 3: Logs -->
+                <div id="log-panel" class="layout-panel">
+                    <h2>Log de Actividad</h2>
+                    <pre id="log-output"></pre>
+                </div>
+            </div>
+
+            <div class="bottom-section">
+                <!-- Fila Inferior: Resultados -->
+                <div id="resultados-panel" class="layout-panel">
+                    <h2>Resultados (procesados.md)</h2>
+                    <div id="procesados-output" class="markdown-body"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>

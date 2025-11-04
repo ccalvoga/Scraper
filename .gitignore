@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.log
+*.sqlite3
+*.db
+*.egg-info/
+temp_repo/
+ejecuciones/
+autoconsumo_documents/

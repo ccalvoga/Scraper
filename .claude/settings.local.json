@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s \"D:\\MisPython\\04 WEB_Scraper\")",
+      "Bash(dir:*)",
+      "Bash(tree:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(powershell -Command \"Get-Content ''D:\\MisPython\\04 WEB_Scraper\\ejecuciones\\2025-11-03_21-06-31\\scraper.log'' | Select-Object -Last 100\")",
+      "Bash(powershell:*)",
+      "Bash(findstr:*)",
+      "Bash(python diagnostico.py:*)",
+      "Bash(python -c:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

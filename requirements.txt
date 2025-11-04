@@ -1,0 +1,10 @@
+requests
+beautifulsoup4
+markdown
+tkinterweb
+Flask
+psutil
+selenium
+webdriver-manager
+scrapy
+twisted
