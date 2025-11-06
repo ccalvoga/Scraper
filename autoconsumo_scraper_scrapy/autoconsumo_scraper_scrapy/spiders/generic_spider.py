@@ -277,6 +277,7 @@ class GenericSpider(scrapy.Spider):
         # Extract text
         raw_text = ' '.join(response.css('body *::text').getall())
         page_text_norm = normalize_text(raw_text)
+        page_datetime = self._get_last_modified_datetime(response)
 
         # Check for exclusions
         if self.exclusions_map:
@@ -304,6 +305,14 @@ class GenericSpider(scrapy.Spider):
         # Save page content if keywords found
         if has_keywords:
             self.logger.info(f"✓ Keywords found: {', '.join(keywords_on_page)} | URL: {response.url}")
+            if page_datetime:
+                write_activity(
+                    self.activity_log_path,
+                    'Spider',
+                    'INFO',
+                    f"Fecha considerada: {self._describe_datetime(page_datetime)}",
+                    url_index=log_index
+                )
             write_activity(
                 self.activity_log_path,
                 'Spider',

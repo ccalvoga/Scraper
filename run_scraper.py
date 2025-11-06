@@ -181,11 +181,18 @@ def main(config_file_path):
     filter_start_iso = filter_start_dt.isoformat() if filter_start_dt else None
     filter_end_iso = filter_end_dt.isoformat() if filter_end_dt else None
 
+    def format_filter_range(start: Optional[datetime], end: Optional[datetime]) -> str:
+        if not start and not end:
+            return "sin filtro"
+        start_txt = start.astimezone(timezone.utc).strftime("%Y-%m-%d") if start else "--"
+        end_txt = end.astimezone(timezone.utc).strftime("%Y-%m-%d") if end else "--"
+        return f"{start_txt} → {end_txt}"
+
     write_activity(
         activity_log_file,
         'Sistema',
         'INFO',
-        f"Config: profundidad={max_depth}, estrategia={crawl_strategy}, archivos={','.join(file_types)}, alcance={download_scope}, path={path_restriction}"
+        f"Config: profundidad={max_depth}, estrategia={crawl_strategy}, archivos={','.join(file_types)}, alcance={download_scope}, path={path_restriction}, fechas={format_filter_range(filter_start_dt, filter_end_dt)}"
     )
     # 3. Leer URLs desde fuentes.csv
     sources: List[Dict[str, Any]] = []
