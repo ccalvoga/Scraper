@@ -162,6 +162,9 @@ def start_scrape():
         'status': 'running',
         'current': 0,
         'total': total_urls,
+        'current_index': 0,
+        'current_url': None,
+        'current_description': None,
         'message': f'Ejecución {exec_name} en progreso',
         'execution': exec_name,
         'started_at': datetime.now().isoformat(timespec='seconds')
@@ -191,6 +194,9 @@ def start_scrape():
                     'status': 'error',
                     'current': 0,
                     'total': total_urls,
+                    'current_index': 0,
+                    'current_url': None,
+                    'current_description': None,
                     'message': f'Error al iniciar el scraping: {e}',
                     'execution': exec_name,
                     'finished_at': datetime.now().isoformat(timespec='seconds')
@@ -213,8 +219,11 @@ def cancel_scrape():
                     status = json.load(f)
                 status['status'] = 'idle'
                 status['message'] = 'Cancelado por el usuario'
+                status['current_url'] = None
+                status['current_description'] = None
+                status['current_index'] = status.get('current', 0)
                 with open(status_path, 'w', encoding='utf-8') as f:
-                    json.dump(status, f)
+                    json.dump(status, f, ensure_ascii=False)
             except Exception as e:
                 print(f"Error updating status file: {e}")
 
@@ -225,7 +234,14 @@ def cancel_scrape():
 def scrape_status():
     status_path = os.path.join(BASE_DIR, 'status.json')
     if not os.path.exists(status_path):
-        return jsonify({'status': 'idle', 'current': 0, 'total': 0})
+        return jsonify({
+            'status': 'idle',
+            'current': 0,
+            'total': 0,
+            'current_index': 0,
+            'current_url': None,
+            'current_description': None
+        })
 
     try:
         with open(status_path, 'r', encoding='utf-8') as f:
@@ -238,8 +254,11 @@ def scrape_status():
 
         if status.get('status') == 'running' and not is_crawling:
             status['status'] = 'idle'
+            status['current_url'] = None
+            status['current_description'] = None
+            status['current_index'] = status.get('current', 0)
             with open(status_path, 'w', encoding='utf-8') as f:
-                json.dump(status, f)
+                json.dump(status, f, ensure_ascii=False)
 
         return jsonify(status)
     except Exception as e:

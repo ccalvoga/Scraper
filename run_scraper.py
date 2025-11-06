@@ -12,7 +12,7 @@ import csv
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 # Agregar el directorio de Scrapy al path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,17 +54,30 @@ def write_status(status_file: Optional[str], updates: dict) -> None:
     except Exception as exc:
         print(f"Advertencia al actualizar status.json: {exc}", file=sys.stderr)
 
-def load_start_urls(csv_path: str) -> List[str]:
-    """Carga las URLs iniciales desde un CSV separado por ';'."""
-    start_urls = []
+def load_sources(csv_path: str) -> List[Dict[str, Any]]:
+    """Carga las fuentes desde CSV devolviendo descripción, URL y columnas adicionales."""
+    sources: List[Dict[str, Any]] = []
     with open(csv_path, 'r', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile, delimiter=';')
         for row in reader:
-            if row and len(row) > 1:
-                candidate = row[1].strip()
-                if candidate.startswith('http'):
-                    start_urls.append(candidate)
-    return start_urls
+            if not row or len(row) < 2:
+                continue
+            description = (row[0] or '').strip()
+            candidate_url = row[1].strip()
+            if not candidate_url or not candidate_url.startswith('http'):
+                continue
+            extra = [col.strip() for col in row[2:] if col and col.strip()]
+            sources.append({
+                'description': description,
+                'url': candidate_url,
+                'extra': extra,
+            })
+    return sources
+
+
+def load_start_urls(csv_path: str) -> List[str]:
+    """Carga únicamente las URLs iniciales desde el CSV."""
+    return [source['url'] for source in load_sources(csv_path)]
 
 def build_summary(execution_dir: str, documents_dir: str, start_urls: List[str]) -> dict:
     """Genera el fichero procesados.md con un resumen básico de la ejecución."""
@@ -147,30 +160,46 @@ def main(config_file_path):
         f"Config: profundidad={max_depth}, estrategia={crawl_strategy}, archivos={','.join(file_types)}, alcance={download_scope}, path={path_restriction}"
     )
     # 3. Leer URLs desde fuentes.csv
-    start_urls = []
+    sources: List[Dict[str, Any]] = []
     try:
-        start_urls = load_start_urls(fuentes_file)
+        sources = load_sources(fuentes_file)
     except Exception as e:
         print(f"Error reading fuentes.csv: {e}", file=sys.stderr)
         write_status(status_file, {
             'status': 'error',
             'message': f'Error leyendo fuentes.csv: {e}',
-            'finished_at': datetime.now().isoformat(timespec='seconds')
+            'finished_at': datetime.now().isoformat(timespec='seconds'),
+            'current_url': None,
+            'current_description': None,
+            'current_index': 0
         })
         write_activity(activity_log_file, 'Sistema', 'ERROR', f"Error leyendo fuentes.csv: {e}")
         sys.exit(1)
 
+    start_urls = [source['url'] for source in sources]
     if not start_urls:
         print("No se encontraron URLs en fuentes.csv", file=sys.stderr)
         write_status(status_file, {
             'status': 'error',
             'message': 'No se encontraron URLs válidas en fuentes.csv',
-            'finished_at': datetime.now().isoformat(timespec='seconds')
+            'finished_at': datetime.now().isoformat(timespec='seconds'),
+            'current_url': None,
+            'current_description': None,
+            'current_index': 0
         })
         write_activity(activity_log_file, 'Sistema', 'ERROR', "No se encontraron URLs válidas en fuentes.csv")
         sys.exit(1)
 
     write_activity(activity_log_file, 'Sistema', 'INFO', f"{len(start_urls)} URLs iniciales cargadas")
+
+    source_lookup: Dict[str, Dict[str, Any]] = {
+        source['url']: {
+            'description': source.get('description', ''),
+            'extra': source.get('extra', []),
+            'index': idx
+        }
+        for idx, source in enumerate(sources)
+    }
 
     # 4. Leer términos de interés
     keywords_map = {}
@@ -201,6 +230,18 @@ def main(config_file_path):
     settings.set('TEXT_FILES_STORE', documents_dir, priority='cmdline')
     settings.set('ACTIVITY_LOG_FILE', activity_log_file, priority='cmdline')
 
+    custom_user_agent = user_config.get('user_agent') or (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    )
+    settings.set('USER_AGENT', custom_user_agent, priority='cmdline')
+    settings.set('DEFAULT_REQUEST_HEADERS', {
+        'User-Agent': custom_user_agent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.8,*/*;q=0.7',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Referer': 'https://www.idae.es/'
+    }, priority='cmdline')
+
     # CRÍTICO: Cambiar LOG_LEVEL a INFO para NO loguear items a nivel DEBUG
     settings.set('LOG_LEVEL', 'INFO', priority='cmdline')
 
@@ -215,12 +256,42 @@ def main(config_file_path):
     # 7. Crear y ejecutar el proceso de Scrapy
     process = CrawlerProcess(settings)
 
-    def update_progress(processed: int, url: str):
+    def update_progress(processed: int, url: str, depth: int):
+        total_sources = len(start_urls)
+        capped_current = max(0, min(processed, total_sources))
+        source_info = source_lookup.get(url, {})
+        source_index = source_info.get('index')
+        current_index = (
+            source_index + 1
+            if isinstance(source_index, int)
+            else (capped_current if capped_current > 0 else 0)
+        )
+        description = source_info.get('description') or None
+        progress_parts = []
+        if total_sources:
+            progress_parts.append(f"Procesando {capped_current}/{total_sources}")
+        if description:
+            progress_parts.append(description)
+        elif url:
+            progress_parts.append(url)
+        progress_message = " · ".join(progress_parts) if progress_parts else "Scraping en progreso..."
+
         write_status(status_file, {
-            'current': min(processed, len(start_urls)),
-            'total': len(start_urls)
+            'status': 'running',
+            'current': capped_current,
+            'total': total_sources,
+            'current_url': url,
+            'current_description': description,
+            'current_index': current_index,
+            'message': progress_message
         })
-        write_activity(activity_log_file, 'Scrapy', 'INFO', f"Progreso {processed}/{len(start_urls)} · {url}")
+        write_activity(
+            activity_log_file,
+            'Scrapy',
+            'INFO',
+            f"Progreso {processed}/{len(start_urls)} · Depth ({depth}) · {url}",
+            url_index=current_index if isinstance(current_index, int) and current_index > 0 else None
+        )
 
     process.crawl(
         GenericSpider,
@@ -235,7 +306,8 @@ def main(config_file_path):
         save_page_text=save_page_text,
         save_html=save_html,
         status_updater=update_progress,
-        activity_log_path=activity_log_file
+        activity_log_path=activity_log_file,
+        source_lookup=source_lookup
     )
 
     # 8. Iniciar el scraping (bloqueante)
@@ -248,12 +320,19 @@ def main(config_file_path):
     try:
         process.start()  # Esto bloquea hasta que termine el scraping
         summary = build_summary(execution_dir, documents_dir, start_urls)
-        write_activity(activity_log_file, 'Sistema', 'INFO',
-                       f"Resumen: textos={summary['txt_files']} · html={summary['html_files']} · otros={summary['other_files']}")
+        write_activity(
+            activity_log_file,
+            'Sistema',
+            'INFO',
+            f"Resumen: textos={summary['txt_files']} · html={summary['html_files']} · otros={summary['other_files']}"
+        )
         write_status(status_file, {
             'status': 'idle',
             'current': len(start_urls),
             'total': len(start_urls),
+            'current_url': None,
+            'current_description': None,
+            'current_index': len(start_urls),
             'message': 'Scraping completado',
             'finished_at': datetime.now().isoformat(timespec='seconds')
         })
@@ -263,6 +342,8 @@ def main(config_file_path):
         write_status(status_file, {
             'status': 'error',
             'message': f'Error durante la ejecución: {exc}',
+            'current_url': None,
+            'current_description': None,
             'finished_at': datetime.now().isoformat(timespec='seconds')
         })
         write_activity(activity_log_file, 'Sistema', 'ERROR', f"Error durante la ejecución: {exc}")

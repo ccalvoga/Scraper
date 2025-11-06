@@ -1,9 +1,12 @@
 {
   "status": "idle",
-  "current": 0,
-  "total": 0,
-  "message": "Listo para iniciar",
-  "execution": null,
-  "started_at": null,
-  "finished_at": null
+  "current": 3,
+  "total": 3,
+  "current_index": 3,
+  "current_url": null,
+  "current_description": null,
+  "message": "Scraping completado",
+  "execution": "2025-11-06_17-46-48",
+  "started_at": "2025-11-06T17:46:48",
+  "finished_at": "2025-11-06T17:47:18"
 }

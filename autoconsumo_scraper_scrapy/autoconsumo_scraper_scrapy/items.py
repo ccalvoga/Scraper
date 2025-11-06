@@ -7,3 +7,4 @@ class AutoconsumoScraperScrapyItem(scrapy.Item):
     html = scrapy.Field()
     file_urls = scrapy.Field()
     files = scrapy.Field()
+    source_index = scrapy.Field()

@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const logRefreshBtn = document.getElementById('log-refresh');
     const logLastUpdated = document.getElementById('log-last-updated');
     const logEntryCount = document.getElementById('log-entry-count');
+    const logGroupToggleBtn = document.getElementById('log-group-toggle');
     const procesadosOutput = document.getElementById('procesados-output');
     const startScrapeBtn = document.getElementById('start-scrape');
     const cancelScrapeBtn = document.getElementById('cancel-scrape');
@@ -31,6 +32,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let scrapeStatusInterval;
     let currentLogFilter = 'all';
+    let currentHighlightedUrl = null;
+    let logGroupMode = 'chronological';
+    const processedUrlBuckets = {
+        markdown: new Set(),
+        logs: new Set()
+    };
+    const processedUrlSet = new Set();
+    const sourceMetaByIndex = new Map();
 
     // Configuración del Scraper (valores por defecto)
     let scraperConfig = {
@@ -107,59 +116,228 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabButtons = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
 
+    const activateTab = (targetId) => {
+        if (!targetId) return;
+        tabButtons.forEach(btn => {
+            const isActive = btn.dataset.tab === targetId;
+            btn.classList.toggle('active', isActive);
+        });
+        tabContents.forEach(content => {
+            const isMatch = content.id === targetId;
+            content.classList.toggle('active', isMatch);
+        });
+        if (targetId === 'fuentes-preview-container' && editors['fuentes.csv']) {
+            renderSourcesPreview(editors['fuentes.csv'].value);
+        }
+    };
+
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetId = button.dataset.tab;
-
-            tabButtons.forEach(btn => btn.classList.remove('active'));
-            button.classList.add('active');
-
-            tabContents.forEach(content => {
-                if (content.id === targetId) {
-                    content.classList.add('active');
-                } else {
-                    content.classList.remove('active');
-                }
-            });
-
-            if (targetId === 'fuentes-preview-container') {
-                renderCsvAsTable(editors['fuentes.csv'].value);
-            }
+            activateTab(targetId);
         });
     });
     console.log('Tabs configurados');
 
-    const renderCsvAsTable = (csvContent) => {
+    const escapeHtml = (value) => {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+
+    const normalizeUrl = (value) => {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        const trimmed = String(value).trim();
+        if (!trimmed) {
+            return null;
+        }
+        try {
+            const normalizedUrl = new URL(trimmed);
+            normalizedUrl.hash = '';
+            let href = normalizedUrl.href;
+            if (href.endsWith('/')) {
+                href = href.replace(/\/+$/, '');
+            }
+            return href;
+        } catch (error) {
+            return trimmed.replace(/\/+$/, '');
+        }
+    };
+
+    const updateProcessedSourceCards = () => {
+        if (!fuentesPreview) return;
+        const cards = fuentesPreview.querySelectorAll('.source-card');
+        cards.forEach(card => {
+            const normalizedCardUrl = normalizeUrl(card.dataset.url);
+            if (normalizedCardUrl && processedUrlSet.has(normalizedCardUrl)) {
+                card.classList.add('source-card--processed');
+            } else {
+                card.classList.remove('source-card--processed');
+            }
+        });
+    };
+
+    const recomputeProcessedUrlSet = () => {
+        processedUrlSet.clear();
+        processedUrlBuckets.markdown.forEach(url => processedUrlSet.add(url));
+        processedUrlBuckets.logs.forEach(url => processedUrlSet.add(url));
+    };
+
+    const resetProcessedUrlTracking = () => {
+        processedUrlBuckets.markdown.clear();
+        processedUrlBuckets.logs.clear();
+        processedUrlSet.clear();
+        updateProcessedSourceCards();
+    };
+
+    const refreshProcessedUrlsFromMarkdown = (rawMarkdown = '') => {
+        processedUrlBuckets.markdown.clear();
+        if (typeof rawMarkdown === 'string' && rawMarkdown.trim()) {
+            const urlRegex = /https?:\/\/[^\s<>"'`]+/gi;
+            let match;
+            while ((match = urlRegex.exec(rawMarkdown)) !== null) {
+                const normalized = normalizeUrl(match[0]);
+                if (normalized) {
+                    processedUrlBuckets.markdown.add(normalized);
+                }
+            }
+        }
+        recomputeProcessedUrlSet();
+        updateProcessedSourceCards();
+    };
+
+    const refreshProcessedUrlsFromLogs = () => {
+        processedUrlBuckets.logs.clear();
+        const urlRegex = /https?:\/\/[^\s<>"'`]+/gi;
+
+        parsedLogEntries.forEach(entry => {
+            if (!entry) return;
+            if (!SOURCES_WITH_URL_INDEX.has(entry.source)) return;
+            if (entry.severity === 'error') return;
+            const suspects = [];
+            if (typeof entry.line === 'string') {
+                suspects.push(entry.line);
+            }
+            if (typeof entry.message === 'string' && entry.message !== entry.line) {
+                suspects.push(entry.message);
+            }
+            suspects.forEach(text => {
+                let match;
+                const localRegex = new RegExp(urlRegex.source, urlRegex.flags);
+                while ((match = localRegex.exec(text)) !== null) {
+                    const normalized = normalizeUrl(match[0]);
+                    if (normalized) {
+                        processedUrlBuckets.logs.add(normalized);
+                    }
+                }
+            });
+        });
+
+        recomputeProcessedUrlSet();
+        updateProcessedSourceCards();
+    };
+
+    const highlightSourceByUrl = (targetUrl) => {
+        if (!fuentesPreview) return;
+        const normalizedUrl = normalizeUrl(targetUrl);
+        const cards = fuentesPreview.querySelectorAll('.source-card');
+        let newlyActivated = null;
+
+        cards.forEach(card => {
+            const cardUrl = normalizeUrl(card.dataset.url);
+            const isMatch = normalizedUrl && cardUrl === normalizedUrl;
+            const wasActive = card.classList.contains('active');
+            if (isMatch) {
+                card.classList.add('active');
+                if (!wasActive) {
+                    newlyActivated = card;
+                }
+            } else {
+                card.classList.remove('active');
+            }
+        });
+
+        if (newlyActivated) {
+            newlyActivated.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        currentHighlightedUrl = normalizedUrl || null;
+    };
+
+    const renderSourcesPreview = (csvContent) => {
         if (!fuentesPreview) return;
 
-        const lines = csvContent.trim().split('\n');
-        if (lines.length === 0) {
-            fuentesPreview.innerHTML = '<p>No hay datos que mostrar.</p>';
+        const trimmed = (csvContent || '').trim();
+        sourceMetaByIndex.clear();
+        if (!trimmed) {
+            fuentesPreview.innerHTML = '<p class="sources-preview__empty">No hay datos que mostrar.</p>';
+            highlightSourceByUrl(null);
             return;
         }
 
-        let table = '<table class="csv-preview-table"><thead><tr>';
-        const headers = lines[0].split(';');
-        headers.forEach(header => {
-            table += `<th>${header}</th>`;
-        });
-        table += '</tr></thead><tbody>';
+        const lines = trimmed.split(/\r?\n/).filter(line => line.trim().length > 0);
+        const entries = [];
 
-        for (let i = 1; i < lines.length; i++) {
-            table += '<tr>';
-            const cells = lines[i].split(';');
-            cells.forEach(cell => {
-                if (cell.trim().startsWith('http')) {
-                    table += `<td><a href="${cell.trim()}" target="_blank">${cell.trim()}</a></td>`;
-                } else {
-                    table += `<td>${cell}</td>`;
-                }
+        lines.forEach(line => {
+            const cells = line.split(';');
+            if (cells.length < 2) {
+                return;
+            }
+            const description = (cells[0] || '').trim();
+            const urlCandidate = (cells[1] || '').trim();
+            if (!/^https?:\/\//i.test(urlCandidate)) {
+                return;
+            }
+            const extra = cells.slice(2).map(chunk => (chunk ? chunk.trim() : '')).filter(Boolean);
+            entries.push({
+                description,
+                url: urlCandidate,
+                extra
             });
-            table += '</tr>';
+        });
+
+        if (entries.length === 0) {
+            fuentesPreview.innerHTML = '<p class="sources-preview__empty">No hay datos que mostrar.</p>';
+            highlightSourceByUrl(null);
+            return;
         }
 
-        table += '</tbody></table>';
-        fuentesPreview.innerHTML = table;
+        let markup = '<div class="sources-preview">';
+        entries.forEach((entry, idx) => {
+            const indexValue = idx + 1;
+            sourceMetaByIndex.set(indexValue, {
+                description: entry.description,
+                url: entry.url
+            });
+            const extrasMarkup = entry.extra.length
+                ? `<ul class="source-card__meta">${entry.extra.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+                : '';
+            markup += `
+                <article class="source-card" data-url="${escapeHtml(entry.url)}" data-index="${indexValue}">
+                    <div class="source-card__header">
+                        <span class="source-card__index">#${indexValue}</span>
+                        <span class="source-card__description">${escapeHtml(entry.description || '(Sin descripción)')}</span>
+                    </div>
+                    <div class="source-card__footer">
+                        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener">${escapeHtml(entry.url)}</a>
+                    </div>
+                    ${extrasMarkup}
+                </article>
+            `;
+        });
+        markup += '</div>';
+
+        fuentesPreview.innerHTML = markup;
+        updateProcessedSourceCards();
+        highlightSourceByUrl(currentHighlightedUrl);
     };
 
     // --- Lógica de Ficheros (con timeout) ---
@@ -180,7 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (data.content && editors[filename]) {
                         editors[filename].value = data.content;
                         if (filename === 'fuentes.csv') {
-                            renderCsvAsTable(data.content);
+                            renderSourcesPreview(data.content);
                         }
                     }
                 })
@@ -197,7 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Listener para actualizar vista previa
     if (editors['fuentes.csv']) {
         editors['fuentes.csv'].addEventListener('input', (e) => {
-            renderCsvAsTable(e.target.value);
+            renderSourcesPreview(e.target.value);
         });
     }
 
@@ -251,8 +429,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }];
                 lastLogRawContent = '';
                 updateLogDisplay(true);
+                refreshProcessedUrlsFromLogs();
             }
             if (procesadosOutput) procesadosOutput.innerHTML = '<p>Esperando nueva ejecución...</p>';
+            resetProcessedUrlTracking();
             alert('Ficheros recargados y vistas limpiadas.');
         });
     }
@@ -335,10 +515,12 @@ document.addEventListener('DOMContentLoaded', () => {
         Spider: 'log-source--spider',
         Pipeline: 'log-source--pipeline',
         Sistema: 'log-source--sistema',
+        Download: 'log-source--downloader',
         Downloader: 'log-source--downloader',
         Engine: 'log-source--engine',
         Extensions: 'log-source--engine'
     };
+    const SOURCES_WITH_URL_INDEX = new Set(['Scrapy', 'Spider', 'Download', 'Downloader', 'Pipeline', 'Engine']);
 
     const detectLogSeverity = (line) => {
         const upper = line.toUpperCase();
@@ -408,31 +590,69 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const parseLogContent = (content) => {
+        let lastUrlIndex = null;
+        const LEVEL_TOKENS = new Set(['ERROR', 'WARNING', 'WARN', 'DEBUG']);
+
         return content
             .split(/\r?\n/)
             .filter(line => line.trim().length > 0)
             .map((line, index) => {
-                const parts = line
+                const rawParts = line
                     .split(LOG_SEPARATOR)
                     .map(part => part.trim())
                     .filter(part => part.length > 0);
 
-                let time = '';
-                let source = '';
-                let level = '';
-                let messageParts = [];
+                if (rawParts.length === 0) {
+                    return {
+                        id: index,
+                        line,
+                        severity: 'info',
+                        time: '',
+                        source: '',
+                        level: '',
+                        message: line,
+                        sourceClass: getSourceClass(''),
+                        urlIndex: null
+                    };
+                }
 
-                if (parts.length >= 4) {
-                    time = parts[0];
-                    source = parts[1];
-                    level = parts[2];
-                    messageParts = parts.slice(3);
-                } else if (parts.length === 3) {
-                    time = parts[0];
-                    source = parts[1];
-                    messageParts = parts.slice(2);
-                } else {
-                    messageParts = [parts.join(' \u2013 ')];
+                let time = rawParts.shift() || '';
+                let source = rawParts.shift() || '';
+                let level = '';
+                let urlIndex = null;
+
+                if (rawParts.length) {
+                    const candidateLevel = normalizeLevel(rawParts[0]);
+                    if (candidateLevel && LEVEL_TOKENS.has(candidateLevel)) {
+                        level = candidateLevel;
+                        rawParts.shift();
+                    }
+                }
+
+                if (rawParts.length && /^#\d+$/.test(rawParts[0])) {
+                    const candidateIndex = Number(rawParts[0].slice(1));
+                    if (Number.isFinite(candidateIndex)) {
+                        urlIndex = candidateIndex;
+                        lastUrlIndex = candidateIndex;
+                    }
+                    rawParts.shift();
+                }
+
+                const messageParts = rawParts.length > 0 ? rawParts : [line];
+
+                const progressMatch = line.match(/Progreso\s+(\d+)\s*\/\s*(\d+)/i);
+                if (progressMatch) {
+                    const progressIndex = Number(progressMatch[1]);
+                    if (Number.isFinite(progressIndex)) {
+                        lastUrlIndex = progressIndex;
+                        if (urlIndex === null) {
+                            urlIndex = progressIndex;
+                        }
+                    }
+                }
+
+                if (urlIndex === null && SOURCES_WITH_URL_INDEX.has(source) && Number.isFinite(lastUrlIndex)) {
+                    urlIndex = lastUrlIndex;
                 }
 
                 const normalizedLevel = normalizeLevel(level);
@@ -448,7 +668,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     source,
                     level: normalizedLevel,
                     message: messageToUse,
-                    sourceClass: getSourceClass(source)
+                    sourceClass: getSourceClass(source),
+                    urlIndex
                 };
             });
     };
@@ -465,6 +686,52 @@ document.addEventListener('DOMContentLoaded', () => {
         span.className = className;
         span.textContent = text;
         return span;
+    };
+
+    const describeLogGroup = (index) => {
+        if (!Number.isFinite(index) || index <= 0) {
+            return 'General';
+        }
+        const meta = sourceMetaByIndex.get(index);
+        const baseLabel = `Fuente #${index}`;
+        if (!meta) {
+            return baseLabel;
+        }
+        let cleanedDescription = (meta.description || '').trim();
+        const normalized = cleanedDescription.toLowerCase().replace(/\s+/g, '');
+        if (!cleanedDescription || normalized === '(sindescripcion)' || normalized === '(sindescripci\u00f3n)') {
+            cleanedDescription = '';
+        }
+        if (cleanedDescription) {
+            return `${baseLabel} — ${cleanedDescription}`;
+        }
+        return meta.url ? `${baseLabel} — ${meta.url}` : baseLabel;
+    };
+
+    const createLogLineElement = (entry) => {
+        const severityClass = entry.severity || 'info';
+        const lineElement = document.createElement('div');
+        lineElement.className = `log-line log-line--${severityClass}`;
+
+        if (entry.time) {
+            lineElement.appendChild(createSpan('log-time', entry.time));
+        }
+
+        if (Number.isFinite(entry.urlIndex)) {
+            lineElement.appendChild(createSpan('log-url-index', `#${entry.urlIndex}`));
+        }
+
+        if (entry.source) {
+            const sourceClasses = ['log-source'];
+            if (entry.sourceClass) {
+                sourceClasses.push(entry.sourceClass);
+            }
+            lineElement.appendChild(createSpan(sourceClasses.join(' '), entry.source));
+        }
+
+        const messageText = entry.message || entry.line || '';
+        lineElement.appendChild(createSpan('log-message', messageText));
+        return lineElement;
     };
 
     const updateLogDisplay = (forceScroll = false) => {
@@ -485,32 +752,49 @@ document.addEventListener('DOMContentLoaded', () => {
         if (truncated) {
             const metaLine = document.createElement('div');
             metaLine.className = 'log-line log-line--meta';
-            metaLine.textContent = `... mostrando últimas ${entriesToRender.length} de ${filteredEntries.length} entradas`;
+            metaLine.textContent = `... mostrando ultimas ${entriesToRender.length} de ${filteredEntries.length} entradas`;
             fragment.appendChild(metaLine);
         }
 
-        entriesToRender.forEach(entry => {
-            const severityClass = entry.severity || 'info';
-            const lineElement = document.createElement('div');
-            lineElement.className = `log-line log-line--${severityClass}`;
-
-            if (entry.time) {
-                lineElement.appendChild(createSpan('log-time', entry.time));
-            }
-
-            if (entry.source) {
-                const sourceClasses = ['log-source'];
-                if (entry.sourceClass) {
-                    sourceClasses.push(entry.sourceClass);
+        if (logGroupMode === 'grouped') {
+            const grouped = new Map();
+            entriesToRender.forEach(entry => {
+                const key = Number.isFinite(entry.urlIndex) ? entry.urlIndex : 0;
+                if (!grouped.has(key)) {
+                    grouped.set(key, []);
                 }
-                lineElement.appendChild(createSpan(sourceClasses.join(' '), entry.source));
-            }
+                grouped.get(key).push(entry);
+            });
 
-            const messageText = entry.message || entry.line || '';
-            lineElement.appendChild(createSpan('log-message', messageText));
+            const sortedKeys = Array.from(grouped.keys()).sort((a, b) => {
+                if (a === 0) return -1;
+                if (b === 0) return 1;
+                return a - b;
+            });
 
-            fragment.appendChild(lineElement);
-        });
+            sortedKeys.forEach(key => {
+                const groupEntries = grouped.get(key);
+                const groupElement = document.createElement('div');
+                groupElement.className = 'log-group';
+
+                const header = document.createElement('div');
+                header.className = 'log-group__header';
+                header.appendChild(createSpan('log-group__title', describeLogGroup(key)));
+                header.appendChild(createSpan('log-group__count', `${groupEntries.length} entradas`));
+
+                const body = document.createElement('div');
+                body.className = 'log-group__body';
+                groupEntries.forEach(entry => body.appendChild(createLogLineElement(entry)));
+
+                groupElement.appendChild(header);
+                groupElement.appendChild(body);
+                fragment.appendChild(groupElement);
+            });
+        } else {
+            entriesToRender.forEach(entry => {
+                fragment.appendChild(createLogLineElement(entry));
+            });
+        }
 
         logOutput.innerHTML = '';
         logOutput.appendChild(fragment);
@@ -539,11 +823,23 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (logGroupToggleBtn) {
+        logGroupToggleBtn.addEventListener('click', () => {
+            logGroupMode = logGroupMode === 'chronological' ? 'grouped' : 'chronological';
+            logGroupToggleBtn.classList.toggle('active', logGroupMode === 'grouped');
+            logGroupToggleBtn.textContent = logGroupMode === 'grouped'
+                ? 'Ver en orden cronologico'
+                : 'Agrupar por fuente';
+            updateLogDisplay(true);
+        });
+    }
+
     if (logClearBtn) {
         logClearBtn.addEventListener('click', () => {
             parsedLogEntries = [];
             lastLogRawContent = '';
             updateLogDisplay();
+            refreshProcessedUrlsFromLogs();
             if (logLastUpdated) {
                 logLastUpdated.textContent = 'Actualizado: --';
             }
@@ -568,20 +864,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 return response.json();
             })
             .then(data => {
+                let highlightTarget = null;
+
                 if (data.status === 'running') {
-                    startScrapeBtn.disabled = true;
-                    startScrapeBtn.textContent = 'Scraping en progreso...';
+                    if (startScrapeBtn) {
+                        startScrapeBtn.disabled = true;
+                        startScrapeBtn.textContent = 'Scraping en progreso...';
+                    }
                     if (cancelScrapeBtn) {
                         cancelScrapeBtn.disabled = false;
                         cancelScrapeBtn.textContent = 'Cancelar Scraping';
                     }
                     if (scrapeStatusSpan) {
-                        const runningMessage = data.message || `Scrapeando ${data.current} de ${data.total} fuentes...`;
+                        const totalRaw = Number(data.total);
+                        const currentRaw = Number(data.current);
+                        const total = Number.isFinite(totalRaw) ? totalRaw : 0;
+                        const current = Number.isFinite(currentRaw) ? currentRaw : 0;
+                        const parts = [];
+                        if (total) {
+                            parts.push(`Procesando ${current}/${total}`);
+                        }
+                        const descriptor = data.current_description || data.current_url;
+                        if (descriptor) {
+                            parts.push(descriptor);
+                        }
+                        const runningMessage = data.message || (parts.length ? parts.join(' · ') : 'Scraping en progreso...');
                         scrapeStatusSpan.textContent = runningMessage;
                     }
+                    highlightTarget = data.current_url || null;
                 } else if (data.status === 'error') {
-                    startScrapeBtn.disabled = false;
-                    startScrapeBtn.textContent = 'Reintentar scraping';
+                    if (startScrapeBtn) {
+                        startScrapeBtn.disabled = false;
+                        startScrapeBtn.textContent = 'Reintentar scraping';
+                    }
                     if (cancelScrapeBtn) {
                         cancelScrapeBtn.disabled = true;
                         cancelScrapeBtn.textContent = 'Cancelar';
@@ -589,23 +904,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (scrapeStatusSpan) {
                         scrapeStatusSpan.textContent = data.message || 'Scraping detenido con errores.';
                     }
+                    highlightTarget = null;
                     if (scrapeStatusInterval) {
                         clearInterval(scrapeStatusInterval);
                         scrapeStatusInterval = null;
                     }
                 } else {
-                    startScrapeBtn.disabled = false;
-                    startScrapeBtn.textContent = 'Iniciar Scraping';
+                    if (startScrapeBtn) {
+                        startScrapeBtn.disabled = false;
+                        startScrapeBtn.textContent = 'Iniciar Scraping';
+                    }
                     if (cancelScrapeBtn) {
                         cancelScrapeBtn.disabled = true;
                         cancelScrapeBtn.textContent = 'Cancelar';
                     }
-                    if (scrapeStatusSpan) scrapeStatusSpan.textContent = data.message || '';
+                    if (scrapeStatusSpan) {
+                        scrapeStatusSpan.textContent = data.message || '';
+                    }
+                    highlightTarget = null;
                     if (scrapeStatusInterval) {
                         clearInterval(scrapeStatusInterval);
                         scrapeStatusInterval = null;
                     }
                 }
+
+                highlightSourceByUrl(highlightTarget);
             })
             .catch(error => {
                 clearTimeout(timeoutId);
@@ -615,6 +938,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (startScrapeBtn) {
         startScrapeBtn.addEventListener('click', () => {
+            activateTab('fuentes-preview-container');
             if (logOutput) {
                 parsedLogEntries = [{
                     id: Date.now(),
@@ -631,6 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 cancelScrapeBtn.textContent = 'Cancelar Scraping';
             }
             if (scrapeStatusSpan) scrapeStatusSpan.textContent = 'Inicializando...';
+            highlightSourceByUrl(null);
 
             if (!scrapeStatusInterval) {
                 scrapeStatusInterval = setInterval(updateScrapeStatus, 1000);
@@ -704,6 +1029,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     startScrapeBtn.disabled = false;
                     startScrapeBtn.textContent = 'Iniciar Scraping';
                     if (scrapeStatusSpan) scrapeStatusSpan.textContent = '';
+                    highlightSourceByUrl(null);
                     if (scrapeStatusInterval) {
                         clearInterval(scrapeStatusInterval);
                         scrapeStatusInterval = null;
@@ -730,8 +1056,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 return response.json();
             })
             .then(data => {
-                if (data.content && procesadosOutput) {
-                    procesadosOutput.innerHTML = marked.parse(data.content);
+                if (procesadosOutput) {
+                    if (data.content) {
+                        procesadosOutput.innerHTML = marked.parse(data.content);
+                        refreshProcessedUrlsFromMarkdown(data.content);
+                    } else {
+                        procesadosOutput.innerHTML = '';
+                        refreshProcessedUrlsFromMarkdown('');
+                    }
+                } else if (data.content) {
+                    refreshProcessedUrlsFromMarkdown(data.content);
+                } else {
+                    refreshProcessedUrlsFromMarkdown('');
                 }
             })
             .catch(error => {
@@ -754,6 +1090,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (data.content !== lastLogRawContent) {
                         lastLogRawContent = data.content;
                         parsedLogEntries = parseLogContent(data.content);
+                        refreshProcessedUrlsFromLogs();
                         if (logLastUpdated) {
                             const now = new Date();
                             logLastUpdated.textContent = `Actualizado: ${now.toLocaleTimeString()}`;
@@ -764,6 +1101,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     parsedLogEntries = [];
                     lastLogRawContent = '';
                     logOutput.innerHTML = '';
+                    refreshProcessedUrlsFromLogs();
                     if (logEntryCount) {
                         logEntryCount.textContent = 'Entradas: 0';
                     }

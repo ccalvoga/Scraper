@@ -1,11 +1,3 @@
 autoconsumo
-autoconsumo colectivo
-autoconsumo compartido
-autoconsumo fotovoltaico
-instalación fotovoltaica
-tramitación
-fotovoltaica
-FV
-compensación de excedentes
-renovables
+
 

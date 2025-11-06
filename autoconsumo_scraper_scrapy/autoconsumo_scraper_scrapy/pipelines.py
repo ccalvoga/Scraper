@@ -55,9 +55,10 @@ class TextFilePipeline:
             spider.logger.info(f"✓ Text saved: {text_filename}")
             write_activity(
                 activity_log_path,
-                'Pipeline',
+                'Download',
                 'INFO',
-                f"Texto guardado: {text_filename}"
+                f"Texto guardado: {text_filename}",
+                url_index=item.get('source_index')
             )
 
         # Save HTML file if available
@@ -73,9 +74,10 @@ class TextFilePipeline:
             spider.logger.info(f"✓ HTML saved: {html_filename}")
             write_activity(
                 activity_log_path,
-                'Pipeline',
+                'Download',
                 'INFO',
-                f"HTML guardado: {html_filename}"
+                f"HTML guardado: {html_filename}",
+                url_index=item.get('source_index')
             )
 
         return item
