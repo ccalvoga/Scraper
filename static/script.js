@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const applyConfigBtn = document.getElementById('apply-config');
     const executionSelector = document.getElementById('execution-selector');
     const saveButtons = document.querySelectorAll('.save-btn');
+    const dedupeFuentesBtn = document.getElementById('dedupe-fuentes');
+    const dedupeFeedback = document.getElementById('dedupe-feedback');
 
     let scrapeStatusInterval;
     let currentLogFilter = 'all';
@@ -646,6 +648,76 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    const dedupeFuentes = () => {
+        if (isHistoricalMode()) {
+            alert('No se pueden modificar ejecuciones archivadas.');
+            return;
+        }
+        const editor = editors['fuentes.csv'];
+        if (!editor) return;
+
+        const originalContent = editor.value;
+        if (!originalContent.trim()) {
+            if (dedupeFeedback) {
+                dedupeFeedback.textContent = 'No hay datos que limpiar.';
+                setTimeout(() => dedupeFeedback.textContent = '', 3000);
+            }
+            return;
+        }
+
+        const lines = originalContent.split(/\r?\n/);
+        const seen = new Set();
+        let duplicates = 0;
+        const cleanedLines = [];
+
+        lines.forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                cleanedLines.push(line);
+                return;
+            }
+            const cells = trimmed.split(';');
+            if (cells.length < 2) {
+                cleanedLines.push(line);
+                return;
+            }
+            const url = cells[1].trim();
+            if (!url) {
+                cleanedLines.push(line);
+                return;
+            }
+            if (seen.has(url)) {
+                duplicates += 1;
+                return;
+            }
+            seen.add(url);
+            cleanedLines.push(line);
+        });
+
+        editor.value = cleanedLines.join('\n');
+        renderSourcesPreview(editor.value);
+        if (dedupeFeedback) {
+            if (duplicates === 0) {
+                dedupeFeedback.textContent = 'No se encontraron duplicados.';
+            } else if (duplicates === 1) {
+                dedupeFeedback.textContent = '1 URL duplicada eliminada.';
+            } else {
+                dedupeFeedback.textContent = `${duplicates} URLs duplicadas eliminadas.`;
+            }
+            setTimeout(() => {
+                if (dedupeFeedback.textContent) {
+                    dedupeFeedback.textContent = '';
+                }
+            }, 3000);
+        }
+    };
+
+    if (dedupeFuentesBtn) {
+        dedupeFuentesBtn.addEventListener('click', () => {
+            dedupeFuentes();
+        });
+    }
 
     if (reloadFilesBtn) {
         reloadFilesBtn.addEventListener('click', () => {
