@@ -133,6 +133,19 @@
                 </div>
             </div>
 
+            <div class="config-section">
+                <h3>📅 Filtro por fecha</h3>
+                <div class="config-row">
+                    <label for="filter-start-date">Desde:</label>
+                    <input type="date" id="filter-start-date">
+                </div>
+                <div class="config-row">
+                    <label for="filter-end-date">Hasta:</label>
+                    <input type="date" id="filter-end-date">
+                </div>
+                <p class="help-text">Solo se procesará contenido cuyo Last-Modified esté dentro del rango. Si no hay fecha disponible, el recurso se considerará válido.</p>
+            </div>
+
             <button id="apply-config" class="apply-config-btn">✓ Aplicar Configuración</button>
         </div>
 

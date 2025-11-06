@@ -10,7 +10,7 @@ import os
 import json
 import csv
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -140,6 +140,28 @@ def main(config_file_path):
     activity_log_file = os.path.join(execution_dir, 'activity.log')
     user_config = config['user_config']
 
+    def normalize_date(value: Optional[str], is_end: bool = False) -> Optional[datetime]:
+        if not value:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            if len(value) == 10:
+                base_dt = datetime.strptime(value, "%Y-%m-%d")
+                if is_end:
+                    base_dt = base_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            else:
+                base_dt = datetime.fromisoformat(value)
+            if base_dt.tzinfo is None:
+                base_dt = base_dt.replace(tzinfo=timezone.utc)
+            else:
+                base_dt = base_dt.astimezone(timezone.utc)
+            return base_dt
+        except ValueError:
+            print(f"Advertencia: no se pudo interpretar la fecha '{value}'", file=sys.stderr)
+            return None
+
     # Reiniciar activity log
     Path(activity_log_file).write_text("", encoding='utf-8')
     write_activity(activity_log_file, 'Sistema', 'INFO', f"Iniciando ejecución en {execution_dir}")
@@ -152,6 +174,12 @@ def main(config_file_path):
     path_restriction = user_config.get('path_restriction', 'base-path')
     save_page_text = user_config.get('save_page_text', True)
     save_html = user_config.get('save_html', True)
+    raw_start_date = user_config.get('start_date')
+    raw_end_date = user_config.get('end_date')
+    filter_start_dt = normalize_date(raw_start_date, is_end=False)
+    filter_end_dt = normalize_date(raw_end_date, is_end=True)
+    filter_start_iso = filter_start_dt.isoformat() if filter_start_dt else None
+    filter_end_iso = filter_end_dt.isoformat() if filter_end_dt else None
 
     write_activity(
         activity_log_file,
@@ -229,6 +257,8 @@ def main(config_file_path):
     settings.set('FILES_STORE', documents_dir, priority='cmdline')
     settings.set('TEXT_FILES_STORE', documents_dir, priority='cmdline')
     settings.set('ACTIVITY_LOG_FILE', activity_log_file, priority='cmdline')
+    settings.set('FILTER_START_DATE', filter_start_iso, priority='cmdline')
+    settings.set('FILTER_END_DATE', filter_end_iso, priority='cmdline')
 
     custom_user_agent = user_config.get('user_agent') or (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -305,6 +335,8 @@ def main(config_file_path):
         path_restriction=path_restriction,
         save_page_text=save_page_text,
         save_html=save_html,
+        start_date=filter_start_iso,
+        end_date=filter_end_iso,
         status_updater=update_progress,
         activity_log_path=activity_log_file,
         source_lookup=source_lookup

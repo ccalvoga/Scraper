@@ -33,6 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveButtons = document.querySelectorAll('.save-btn');
     const dedupeFuentesBtn = document.getElementById('dedupe-fuentes');
     const dedupeFeedback = document.getElementById('dedupe-feedback');
+    const filterStartInput = document.getElementById('filter-start-date');
+    const filterEndInput = document.getElementById('filter-end-date');
 
     let scrapeStatusInterval;
     let currentLogFilter = 'all';
@@ -152,6 +154,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         saveButtons.forEach(btn => setElementHidden(btn, historical));
         setEditorsReadOnly(historical);
+        if (dedupeFuentesBtn) {
+            const container = dedupeFuentesBtn.parentElement || dedupeFuentesBtn;
+            setElementHidden(container, historical);
+            dedupeFuentesBtn.disabled = historical;
+        }
+        if (dedupeFeedback && historical) {
+            dedupeFeedback.textContent = '';
+        }
         if (reloadFilesBtn) {
             reloadFilesBtn.textContent = historical ? 'Volver a ficheros actuales' : 'Recargar Ficheros';
         }
@@ -165,6 +175,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!historical && toggleConfigBtn) {
             toggleConfigBtn.classList.remove('hidden');
             toggleConfigBtn.textContent = '⚙️ Configuración Avanzada';
+        }
+        if (filterStartInput) {
+            filterStartInput.disabled = historical;
+        }
+        if (filterEndInput) {
+            filterEndInput.disabled = historical;
         }
     };
 
@@ -265,10 +281,19 @@ document.addEventListener('DOMContentLoaded', () => {
         download_scope: 'same-domain',
         path_restriction: 'base-path',
         save_page_text: true,
-        save_html: true
+        save_html: true,
+        start_date: null,
+        end_date: null
     };
 
     console.log('Variables inicializadas');
+
+    if (filterStartInput) {
+        filterStartInput.value = scraperConfig.start_date || '';
+    }
+    if (filterEndInput) {
+        filterEndInput.value = scraperConfig.end_date || '';
+    }
 
     const LOG_PANEL_WIDTH_KEY = 'logPanelWidth';
     const MIN_LOG_PANEL_WIDTH = 320;
@@ -315,6 +340,8 @@ document.addEventListener('DOMContentLoaded', () => {
             scraperConfig.path_restriction = document.querySelector('input[name="path-restriction"]:checked').value;
             scraperConfig.save_page_text = document.getElementById('save-page-text').checked;
             scraperConfig.save_html = document.getElementById('save-html').checked;
+            scraperConfig.start_date = filterStartInput && filterStartInput.value ? filterStartInput.value : null;
+            scraperConfig.end_date = filterEndInput && filterEndInput.value ? filterEndInput.value : null;
 
             const selectedFileTypes = [];
             document.querySelectorAll('input[name="file-type"]:checked').forEach(checkbox => {

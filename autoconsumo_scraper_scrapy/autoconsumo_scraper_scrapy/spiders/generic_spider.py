@@ -1,6 +1,8 @@
 import scrapy
 import os
 import unicodedata
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
 from autoconsumo_scraper_scrapy.items import AutoconsumoScraperScrapyItem
 from autoconsumo_scraper_scrapy.activity_log import write_activity
@@ -20,6 +22,7 @@ class GenericSpider(scrapy.Spider):
     def __init__(self, start_urls, keywords_map=None, exclusions_map=None, max_depth=3,
                  crawl_strategy='continue', file_types=None, download_scope='same-domain',
                  path_restriction='base-path', save_page_text=True, save_html=True,
+                 start_date=None, end_date=None,
                  status_updater=None, activity_log_path=None, source_lookup=None,
                  *args, **kwargs):
         super(GenericSpider, self).__init__(*args, **kwargs)
@@ -38,6 +41,10 @@ class GenericSpider(scrapy.Spider):
         self.status_updater = status_updater
         self.activity_log_path = activity_log_path
         self._processed_roots = set()
+        self.filter_start_raw = start_date
+        self.filter_end_raw = end_date
+        self.filter_start_date = self._parse_user_datetime(start_date, is_end=False)
+        self.filter_end_date = self._parse_user_datetime(end_date, is_end=True)
         self.source_lookup = source_lookup or {}
 
         # Extraer dominios únicos de las start_urls
@@ -71,9 +78,10 @@ class GenericSpider(scrapy.Spider):
         for url in self.start_urls:
             info = self.source_lookup.get(url, {})
             index = info.get('index')
+            log_index = index + 1 if isinstance(index, int) else None
             meta = {
                 'source_index': index,
-                'log_index': index + 1,
+                'log_index': log_index,
                 'root_url': url
             }
             yield scrapy.Request(
@@ -100,6 +108,73 @@ class GenericSpider(scrapy.Spider):
             extensions.update({'.txt', '.csv', '.json', '.xml', '.md'})
 
         return extensions
+
+    def _parse_user_datetime(self, value, is_end=False):
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            self.logger.warning(f"No se pudo interpretar la fecha de filtro: {value}")
+            return None
+        if is_end and dt.tzinfo is None:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+
+    def _normalize_utc(self, dt):
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def _describe_datetime(self, dt):
+        if not dt:
+            return 'sin fecha'
+        return dt.astimezone(timezone.utc).isoformat()
+
+    def _get_last_modified_datetime(self, response):
+        header = response.headers.get('Last-Modified')
+        if not header:
+            return None
+        try:
+            dt = parsedate_to_datetime(header.decode('latin1'))
+            return self._normalize_utc(dt)
+        except (TypeError, ValueError):
+            self.logger.debug(f"No se pudo interpretar Last-Modified: {header!r}")
+            return None
+
+    def _is_datetime_within_range(self, dt):
+        if dt is None:
+            return True
+        if self.filter_start_date and dt < self.filter_start_date:
+            return False
+        if self.filter_end_date and dt > self.filter_end_date:
+            return False
+        return True
+
+    def _is_response_within_date_range(self, response, log_index=None):
+        if not self.filter_start_date and not self.filter_end_date:
+            return True
+        dt = self._get_last_modified_datetime(response)
+        if dt is None:
+            return True
+        if not self._is_datetime_within_range(dt):
+            reason = f"Fuera de rango (Last-Modified {self._describe_datetime(dt)}): {response.url}"
+            self.logger.info(reason)
+            write_activity(
+                self.activity_log_path,
+                'Spider',
+                'INFO',
+                reason,
+                url_index=log_index
+            )
+            return False
+        return True
 
     def _resolve_extension_from_content_type(self, response):
         content_type_raw = response.headers.get('Content-Type')
@@ -140,20 +215,34 @@ class GenericSpider(scrapy.Spider):
                 url_index=log_index
             )
             self.logger.warning(f"Direct file request failed with status {status}: {response.url}")
-        else:
+            return
+
+        dt = self._get_last_modified_datetime(response)
+        if (self.filter_start_date or self.filter_end_date) and dt and not self._is_datetime_within_range(dt):
+            message = f"Descarga omitida por fecha (Last-Modified {self._describe_datetime(dt)}): {response.url}"
             write_activity(
                 self.activity_log_path,
                 'Download',
                 'INFO',
-                f"Descarga programada: {response.url}",
+                message,
                 url_index=log_index
             )
-            item = AutoconsumoScraperScrapyItem()
-            item['url'] = response.url
-            item['source_index'] = log_index
-            item['file_urls'] = [response.url]
-            self.logger.info(f"Queued direct file for download: {response.url}")
-            yield item
+            self.logger.info(message)
+            return
+
+        write_activity(
+            self.activity_log_path,
+            'Download',
+            'INFO',
+            f"Descarga programada: {response.url}",
+            url_index=log_index
+        )
+        item = AutoconsumoScraperScrapyItem()
+        item['url'] = response.url
+        item['source_index'] = log_index
+        item['file_urls'] = [response.url]
+        self.logger.info(f"Queued direct file for download: {response.url}")
+        yield item
 
     def parse(self, response, current_depth=0):
         source_index = response.meta.get('source_index')
@@ -177,6 +266,9 @@ class GenericSpider(scrapy.Spider):
                     f"Analizando URL raíz: {response.url}",
                     url_index=log_index
                 )
+
+        if not self._is_response_within_date_range(response, log_index):
+            return
 
         if self._is_direct_file_response(response):
             yield from self._handle_direct_file(response, log_index=log_index)
