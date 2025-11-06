@@ -96,6 +96,27 @@ h2 {
     transition: background-color 0.3s;
 }
 
+#cancel-scrape {
+    background-color: rgba(220, 53, 69, 0.75);
+    color: #ffffff;
+    border: none;
+    padding: 12px 25px;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s, opacity 0.3s;
+}
+
+#cancel-scrape:hover:not([disabled]) {
+    background-color: rgba(220, 53, 69, 0.95);
+}
+
+#cancel-scrape:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 #start-scrape:hover {
     background-color: #218838;
 }
@@ -737,8 +758,14 @@ textarea {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    gap: 12px;
     margin: 8px 0;
+}
+
+.editor-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .secondary-btn {
@@ -769,4 +796,6 @@ textarea {
     font-size: 12px;
     color: #1c6ea4;
     min-height: 18px;
+    flex: 1;
+    text-align: right;
 }
