@@ -379,6 +379,11 @@ body.log-resizing,
 }
 
 .log-source--downloader {
+    color: #f97316;
+    background: rgba(249, 115, 22, 0.18);
+}
+
+.log-source--downloader.log-source--planned {
     color: #cfd8e3;
     background: rgba(207, 216, 227, 0.18);
 }
@@ -392,13 +397,13 @@ body.log-resizing,
     color: #cfd8e3;
 }
 
-.log-line--info .log-message {
-    color: #ffd54f;
-}
-
 .log-line--warning {
 
     color: #ffd166;
+}
+
+.log-message--range-warning {
+    color: #ffd54f;
 }
 
 .log-line--error {

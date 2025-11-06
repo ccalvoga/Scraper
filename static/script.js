@@ -1054,16 +1054,25 @@ document.addEventListener('DOMContentLoaded', () => {
             lineElement.appendChild(createSpan('log-url-index', `#${entry.urlIndex}`));
         }
 
+        let sourceSpan = null;
         if (entry.source) {
             const sourceClasses = ['log-source'];
             if (entry.sourceClass) {
                 sourceClasses.push(entry.sourceClass);
             }
-            lineElement.appendChild(createSpan(sourceClasses.join(' '), entry.source));
+            sourceSpan = createSpan(sourceClasses.join(' '), entry.source);
+            lineElement.appendChild(sourceSpan);
         }
 
         const messageText = entry.message || entry.line || '';
-        lineElement.appendChild(createSpan('log-message', messageText));
+        const messageSpan = createSpan('log-message', messageText);
+        if (messageText.includes('Descarga omitida por fecha') || messageText.includes('Fuera de rango')) {
+            messageSpan.classList.add('log-message--range-warning');
+        }
+        if (sourceSpan && entry.source === 'Download' && messageText.includes('Descarga programada')) {
+            sourceSpan.classList.add('log-source--planned');
+        }
+        lineElement.appendChild(messageSpan);
         return lineElement;
     };
 
