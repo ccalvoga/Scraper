@@ -53,19 +53,68 @@ def extract_start_urls(csv_path: str) -> List[str]:
                     urls.append(candidate)
     return urls
 
+def list_execution_dirs():
+    """Devuelve la lista de ejecuciones ordenada por fecha descendente."""
+    if not os.path.exists(EJECUCIONES_DIR):
+        return []
+    executions = []
+    for entry in os.listdir(EJECUCIONES_DIR):
+        full_path = os.path.join(EJECUCIONES_DIR, entry)
+        if os.path.isdir(full_path):
+            executions.append(entry)
+    return sorted(executions, reverse=True)
+
+def resolve_execution_dir(execution_id: str):
+    """Valida y devuelve la ruta absoluta de una ejecución concreta."""
+    if not execution_id:
+        return None
+    if any(sep in execution_id for sep in ('/', '\\')):
+        return None
+    normalized = os.path.normpath(execution_id)
+    if normalized.startswith('..'):
+        return None
+    execution_path = os.path.join(EJECUCIONES_DIR, normalized)
+    if os.path.isdir(execution_path):
+        return execution_path
+    return None
+
 # ---- Rutas ----
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/api/executions', methods=['GET'])
+def list_executions():
+    executions = []
+    for exec_name in list_execution_dirs():
+        label = exec_name
+        try:
+            dt = datetime.strptime(exec_name, "%Y-%m-%d_%H-%M-%S")
+            label = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+        executions.append({'id': exec_name, 'label': label})
+    return jsonify({'executions': executions})
+
 @app.route('/api/files/<filename>', methods=['GET'])
 def get_file(filename):
-    allowed_files = {
-        'fuentes.csv': FUENTES_FILE,
-        'exclusiones.txt': EXCLUSIONES_FILE,
-        'terminos_interes.txt': TERMINOS_FILE,
-    }
+    execution_id = request.args.get('execution')
+    if execution_id:
+        execution_path = resolve_execution_dir(execution_id)
+        if not execution_path:
+            return jsonify({'error': 'Ejecución no encontrada'}), 404
+        allowed_files = {
+            'fuentes.csv': os.path.join(execution_path, 'fuentes.csv'),
+            'exclusiones.txt': os.path.join(execution_path, 'exclusiones.txt'),
+            'terminos_interes.txt': os.path.join(execution_path, 'terminos_interes.txt'),
+        }
+    else:
+        allowed_files = {
+            'fuentes.csv': FUENTES_FILE,
+            'exclusiones.txt': EXCLUSIONES_FILE,
+            'terminos_interes.txt': TERMINOS_FILE,
+        }
     filepath = allowed_files.get(filename)
     if not filepath or not os.path.exists(filepath):
         return jsonify({'error': 'File not found'}), 404
@@ -79,6 +128,8 @@ def get_file(filename):
 
 @app.route('/api/files/<filename>', methods=['POST'])
 def save_file(filename):
+    if request.args.get('execution'):
+        return jsonify({'error': 'No se permite modificar ejecuciones archivadas'}), 400
     allowed_files = {
         'fuentes.csv': FUENTES_FILE,
         'exclusiones.txt': EXCLUSIONES_FILE,
@@ -266,38 +317,55 @@ def scrape_status():
 
 @app.route('/api/procesados', methods=['GET'])
 def get_procesados():
-    if not os.path.exists(EJECUCIONES_DIR) or not os.listdir(EJECUCIONES_DIR):
+    execution_id = request.args.get('execution')
+    available_execs = list_execution_dirs()
+    if not available_execs:
         return jsonify({'content': ''})
 
     try:
-        latest_exec = sorted(os.listdir(EJECUCIONES_DIR), reverse=True)[0]
-        latest_exec_path = os.path.join(EJECUCIONES_DIR, latest_exec)
-        filepath = os.path.join(latest_exec_path, 'procesados.md')
+        if execution_id:
+            if execution_id not in available_execs:
+                return jsonify({'error': 'Ejecución no encontrada'}), 404
+            selected_exec = execution_id
+        else:
+            selected_exec = available_execs[0]
+
+        selected_exec_path = os.path.join(EJECUCIONES_DIR, selected_exec)
+        filepath = os.path.join(selected_exec_path, 'procesados.md')
 
         if not os.path.exists(filepath):
-            return jsonify({'content': f'# Ejecución: {latest_exec}\n\n*Procesando...*'})
+            return jsonify({'content': f'# Ejecución: {selected_exec}\n\n*Procesando...*'})
 
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        content_with_header = f'# Ejecución: {latest_exec}\n\n{content}'
+        content_with_header = f'# Ejecución: {selected_exec}\n\n{content}'
         return jsonify({'content': content_with_header})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
-    if not os.path.exists(EJECUCIONES_DIR) or not os.listdir(EJECUCIONES_DIR):
+    execution_id = request.args.get('execution')
+    available_execs = list_execution_dirs()
+    if not available_execs:
         return jsonify({'content': 'Aún no hay ejecuciones.'})
 
     try:
-        latest_exec = sorted(os.listdir(EJECUCIONES_DIR), reverse=True)[0]
-        latest_exec_path = os.path.join(EJECUCIONES_DIR, latest_exec)
-        activity_log_path = os.path.join(latest_exec_path, 'activity.log')
-        log_filepath = activity_log_path if os.path.exists(activity_log_path) else os.path.join(latest_exec_path, 'scraper.log')
+        if execution_id:
+            if execution_id not in available_execs:
+                return jsonify({'error': 'Ejecución no encontrada'}), 404
+            selected_exec = execution_id
+        else:
+            selected_exec = available_execs[0]
+
+        selected_exec_path = os.path.join(EJECUCIONES_DIR, selected_exec)
+        activity_log_path = os.path.join(selected_exec_path, 'activity.log')
+        log_filepath = activity_log_path if os.path.exists(activity_log_path) else os.path.join(selected_exec_path, 'scraper.log')
 
         if not os.path.exists(log_filepath):
-            return jsonify({'content': 'Esperando inicio del scraper...'})
+            message = 'Log no disponible para esta ejecución.' if execution_id else 'Esperando inicio del scraper...'
+            return jsonify({'content': message})
 
         # Leer solo las últimas 500 líneas para evitar bloqueos
         max_lines = 500

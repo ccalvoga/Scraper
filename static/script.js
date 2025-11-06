@@ -29,10 +29,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleConfigBtn = document.getElementById('toggle-config');
     const configPanel = document.getElementById('config-panel');
     const applyConfigBtn = document.getElementById('apply-config');
+    const executionSelector = document.getElementById('execution-selector');
+    const saveButtons = document.querySelectorAll('.save-btn');
 
     let scrapeStatusInterval;
     let currentLogFilter = 'all';
     let currentHighlightedUrl = null;
+    let currentExecutionId = null;
+    let executionsList = [];
+    let logsIntervalId = null;
+    let procesadosIntervalId = null;
+    let pollingStartTimeout = null;
     let logGroupMode = 'chronological';
     const processedUrlBuckets = {
         markdown: new Set(),
@@ -40,6 +47,213 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const processedUrlSet = new Set();
     const sourceMetaByIndex = new Map();
+
+    const isHistoricalMode = () => currentExecutionId !== null;
+
+    const buildApiUrl = (url) => {
+        if (isHistoricalMode()) {
+            const separator = url.includes('?') ? '&' : '?';
+            return `${url}${separator}execution=${encodeURIComponent(currentExecutionId)}`;
+        }
+        return url;
+    };
+
+    const findExecutionMeta = (executionId) => executionsList.find(exec => exec.id === executionId);
+
+    const formatExecutionLabel = (executionId) => {
+        if (!executionId) return '';
+        const meta = findExecutionMeta(executionId);
+        if (meta && meta.label) {
+            return meta.label;
+        }
+        return executionId;
+    };
+
+    const setElementHidden = (element, hidden) => {
+        if (!element) return;
+        element.classList.toggle('hidden', hidden);
+    };
+
+    const setEditorsReadOnly = (readOnly) => {
+        Object.values(editors).forEach(editor => {
+            if (!editor) return;
+            editor.readOnly = readOnly;
+            editor.classList.toggle('editor-readonly', readOnly);
+        });
+    };
+
+    let liveInitialTimeouts = [];
+
+    const clearLiveInitialTimeouts = () => {
+        liveInitialTimeouts.forEach(timeoutId => clearTimeout(timeoutId));
+        liveInitialTimeouts = [];
+    };
+
+    const clearDataPollingIntervals = () => {
+        if (pollingStartTimeout) {
+            clearTimeout(pollingStartTimeout);
+            pollingStartTimeout = null;
+        }
+        if (logsIntervalId) {
+            clearInterval(logsIntervalId);
+            logsIntervalId = null;
+        }
+        if (procesadosIntervalId) {
+            clearInterval(procesadosIntervalId);
+            procesadosIntervalId = null;
+        }
+    };
+
+    const stopAllIntervals = () => {
+        clearLiveInitialTimeouts();
+        clearDataPollingIntervals();
+        if (scrapeStatusInterval) {
+            clearInterval(scrapeStatusInterval);
+            scrapeStatusInterval = null;
+        }
+    };
+
+    const startPolling = () => {
+        clearDataPollingIntervals();
+        if (isHistoricalMode()) {
+            return;
+        }
+        logsIntervalId = setInterval(() => {
+            if (!isHistoricalMode()) {
+                try {
+                    loadLogs();
+                } catch (e) {
+                    console.error('Error en polling logs:', e);
+                }
+            }
+        }, 5000);
+        procesadosIntervalId = setInterval(() => {
+            if (!isHistoricalMode()) {
+                try {
+                    loadProcesados();
+                } catch (e) {
+                    console.error('Error en polling procesados:', e);
+                }
+            }
+        }, 10000);
+    };
+
+    const applyModeToUi = (historical) => {
+        setElementHidden(startScrapeBtn, historical);
+        setElementHidden(cancelScrapeBtn, historical);
+        setElementHidden(toggleConfigBtn, historical);
+        if (configPanel) {
+            configPanel.classList.toggle('hidden', historical);
+            if (historical) {
+                configPanel.style.display = 'none';
+            }
+        }
+        saveButtons.forEach(btn => setElementHidden(btn, historical));
+        setEditorsReadOnly(historical);
+        if (reloadFilesBtn) {
+            reloadFilesBtn.textContent = historical ? 'Volver a ficheros actuales' : 'Recargar Ficheros';
+        }
+        if (scrapeStatusSpan) {
+            if (historical) {
+                scrapeStatusSpan.textContent = `Visualizando ejecución ${formatExecutionLabel(currentExecutionId)}`;
+            } else {
+                scrapeStatusSpan.textContent = '';
+            }
+        }
+        if (!historical && toggleConfigBtn) {
+            toggleConfigBtn.classList.remove('hidden');
+            toggleConfigBtn.textContent = '⚙️ Configuración Avanzada';
+        }
+    };
+
+    const switchToHistorical = (executionId) => {
+        if (!executionId) return;
+        if (executionId === currentExecutionId) return;
+        if (executionSelector && executionSelector.value !== executionId) {
+            executionSelector.value = executionId;
+        }
+        currentExecutionId = executionId;
+        stopAllIntervals();
+        applyModeToUi(true);
+        activateTab('fuentes-preview-container');
+        resetProcessedUrlTracking();
+        lastLogRawContent = '';
+        loadFiles();
+        loadProcesados();
+        loadLogs();
+        highlightSourceByUrl(null);
+    };
+
+    const scheduleLiveDataLoads = () => {
+        clearLiveInitialTimeouts();
+        console.log('Iniciando carga diferida...');
+        const addTimeout = (callback, delay) => {
+            const id = setTimeout(() => {
+                liveInitialTimeouts = liveInitialTimeouts.filter(item => item !== id);
+                callback();
+            }, delay);
+            liveInitialTimeouts.push(id);
+        };
+        addTimeout(() => { if (!isHistoricalMode()) loadFiles(); }, 500);
+        addTimeout(() => { if (!isHistoricalMode()) loadProcesados(); }, 1000);
+        addTimeout(() => { if (!isHistoricalMode()) loadLogs(); }, 1500);
+        addTimeout(() => { if (!isHistoricalMode()) updateScrapeStatus(); }, 2000);
+    };
+
+    const switchToLiveMode = () => {
+        if (executionSelector) {
+            executionSelector.value = '__live';
+        }
+        currentExecutionId = null;
+        stopAllIntervals();
+        applyModeToUi(false);
+        highlightSourceByUrl(null);
+        resetProcessedUrlTracking();
+        lastLogRawContent = '';
+        scheduleLiveDataLoads();
+        pollingStartTimeout = setTimeout(() => {
+            startPolling();
+        }, 3000);
+    };
+
+    const renderExecutionOptions = () => {
+        if (!executionSelector) return;
+        const previousValue = isHistoricalMode() ? currentExecutionId : '__live';
+        executionSelector.innerHTML = '';
+        const liveOption = document.createElement('option');
+        liveOption.value = '__live';
+        liveOption.textContent = 'Ejecución actual';
+        executionSelector.appendChild(liveOption);
+
+        executionsList.forEach(exec => {
+            const option = document.createElement('option');
+            option.value = exec.id;
+            option.textContent = exec.label || exec.id;
+            executionSelector.appendChild(option);
+        });
+
+        if (previousValue && previousValue !== '__live') {
+            const exists = executionsList.some(exec => exec.id === previousValue);
+            executionSelector.value = exists ? previousValue : '__live';
+            if (!exists) {
+                currentExecutionId = null;
+            }
+        } else {
+            executionSelector.value = '__live';
+        }
+    };
+
+    const fetchExecutionsList = () => {
+        return fetch('/api/executions')
+            .then(response => response.json())
+            .then(data => {
+                executionsList = Array.isArray(data.executions) ? data.executions : [];
+                renderExecutionOptions();
+            })
+            .catch(error => {
+                console.error('Error al cargar la lista de ejecuciones:', error);
+            });
+    };
 
     // Configuración del Scraper (valores por defecto)
     let scraperConfig = {
@@ -138,6 +352,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
     console.log('Tabs configurados');
+
+    if (executionSelector) {
+        executionSelector.addEventListener('change', (event) => {
+            const selectedValue = event.target.value;
+            if (selectedValue && selectedValue !== '__live') {
+                switchToHistorical(selectedValue);
+            } else {
+                switchToLiveMode();
+            }
+        });
+    }
 
     const escapeHtml = (value) => {
         if (value === null || value === undefined) {
@@ -349,7 +574,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seg timeout
 
-            fetch(`/api/files/${filename}`, { signal: controller.signal })
+            fetch(buildApiUrl(`/api/files/${filename}`), { signal: controller.signal })
                 .then(response => {
                     clearTimeout(timeoutId);
                     return response.json();
@@ -380,6 +605,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const saveFile = (filename) => {
+        if (isHistoricalMode()) {
+            alert('No se pueden guardar cambios mientras se visualiza una ejecución archivada.');
+            return;
+        }
         const content = editors[filename].value;
 
         const controller = new AbortController();
@@ -420,6 +649,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (reloadFilesBtn) {
         reloadFilesBtn.addEventListener('click', () => {
+            if (isHistoricalMode()) {
+                switchToLiveMode();
+                fetchExecutionsList();
+                return;
+            }
             loadFiles();
             if (logOutput) {
                 parsedLogEntries = [{
@@ -855,10 +1089,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Lógica de Scraping y Logs ---
     const updateScrapeStatus = () => {
+        if (isHistoricalMode()) {
+            if (scrapeStatusSpan) {
+                scrapeStatusSpan.textContent = `Visualizando ejecución ${formatExecutionLabel(currentExecutionId)}`;
+            }
+            return;
+        }
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        fetch('/api/scrape_status', { signal: controller.signal })
+        fetch(buildApiUrl('/api/scrape_status'), { signal: controller.signal })
             .then(response => {
                 clearTimeout(timeoutId);
                 return response.json();
@@ -938,6 +1178,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (startScrapeBtn) {
         startScrapeBtn.addEventListener('click', () => {
+            if (isHistoricalMode()) {
+                alert('Estás visualizando una ejecución archivada. Vuelve a los ficheros actuales para iniciar un nuevo scraping.');
+                return;
+            }
             activateTab('fuentes-preview-container');
             if (logOutput) {
                 parsedLogEntries = [{
@@ -1007,6 +1251,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (cancelScrapeBtn) {
         cancelScrapeBtn.addEventListener('click', () => {
+            if (isHistoricalMode()) {
+                return;
+            }
             if (!confirm('¿Estás seguro de que quieres cancelar el scraping?')) {
                 return;
             }
@@ -1050,7 +1297,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        fetch('/api/procesados', { signal: controller.signal })
+        fetch(buildApiUrl('/api/procesados'), { signal: controller.signal })
             .then(response => {
                 clearTimeout(timeoutId);
                 return response.json();
@@ -1069,6 +1316,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     refreshProcessedUrlsFromMarkdown('');
                 }
+                if (!isHistoricalMode()) {
+                    fetchExecutionsList();
+                }
             })
             .catch(error => {
                 clearTimeout(timeoutId);
@@ -1080,7 +1330,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        fetch('/api/logs', { signal: controller.signal })
+        fetch(buildApiUrl('/api/logs'), { signal: controller.signal })
             .then(response => {
                 clearTimeout(timeoutId);
                 return response.json();
@@ -1121,58 +1371,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     console.log('Scraping handlers configurados');
 
-    // --- Carga Inicial (con retraso para evitar bloqueos) ---
-    console.log('Iniciando carga diferida...');
-    setTimeout(() => {
-        try {
-            loadFiles();
-        } catch (e) {
-            console.error('Error en loadFiles:', e);
-        }
-    }, 500);
-
-    setTimeout(() => {
-        try {
-            loadProcesados();
-        } catch (e) {
-            console.error('Error en loadProcesados:', e);
-        }
-    }, 1000);
-
-    setTimeout(() => {
-        try {
-            loadLogs();
-        } catch (e) {
-            console.error('Error en loadLogs:', e);
-        }
-    }, 1500);
-
-    setTimeout(() => {
-        try {
-            updateScrapeStatus();
-        } catch (e) {
-            console.error('Error en updateScrapeStatus:', e);
-        }
-    }, 2000);
-
-    // Polling (empieza después de 3 segundos)
-    setTimeout(() => {
-        setInterval(() => {
-            try {
-                loadProcesados();
-            } catch (e) {
-                console.error('Error en polling procesados:', e);
-            }
-        }, 10000); // Reducido de 5s a 10s
-
-        setInterval(() => {
-            try {
-                loadLogs();
-            } catch (e) {
-                console.error('Error en polling logs:', e);
-            }
-        }, 5000); // Aumentado de 3s a 5s para reducir carga
-    }, 3000);
+    fetchExecutionsList()
+        .finally(() => {
+            switchToLiveMode();
+        });
 
     console.log('✅ Aplicación inicializada correctamente');
 });
